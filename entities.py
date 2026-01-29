@@ -2,6 +2,7 @@
 import pygame
 import math
 import random
+from collections import deque
 from settings import (
     TILE_SIZE, GUARD_SPEED, GUARD_CHASE_SPEED, GUARD_VISION_RANGE, GUARD_HEARING_RANGE, GUARD_FOV,
     LASER_CYCLE, DOOR_HOLD_TIME,
@@ -34,7 +35,11 @@ class Guard:
         self.suspicion_timer = 0
         self.last_seen_pos = None
         self.alert_timer = 0
-        
+
+        # Pathfinding
+        self.current_path = []
+        self.path_update_timer = 0
+
         # Events
         self.triggered_notice = False # For "?" sound
         self.triggered_alert = False  # For "!" sound (if we have one, or just general alert)
@@ -95,11 +100,13 @@ class Guard:
                 self.alert_timer -= 1
                 if self.alert_timer <= 0:
                     self.state = 'PATROL'
+                    self.current_path = []  # Clear path when returning to patrol
             elif self.state == 'SUSPICIOUS':
                 # Lost sight/sound, return to patrol after a bit
                 self.suspicion_timer -= 1
                 if self.suspicion_timer <= 0:
                     self.state = 'PATROL'
+                    self.current_path = []  # Clear path when returning to patrol
 
         # 3. Action Execution
         if self.state == 'CHASE':
@@ -111,41 +118,104 @@ class Guard:
             
         return event
 
+    def _find_path(self, walls, target_pos):
+        """BFS pathfinding - find path avoiding walls."""
+        # Convert positions to grid coordinates
+        start_gx = int(self.rect.centerx // TILE_SIZE)
+        start_gy = int(self.rect.centery // TILE_SIZE)
+        end_gx = int(target_pos[0] // TILE_SIZE)
+        end_gy = int(target_pos[1] // TILE_SIZE)
+
+        # Create wall set for fast lookup
+        wall_tiles = set()
+        for wall in walls:
+            wx = wall.x // TILE_SIZE
+            wy = wall.y // TILE_SIZE
+            wall_tiles.add((wx, wy))
+
+        # BFS
+        queue = deque([(start_gx, start_gy, [])])
+        visited = {(start_gx, start_gy)}
+
+        while queue:
+            gx, gy, path = queue.popleft()
+
+            # Reached target?
+            if gx == end_gx and gy == end_gy:
+                return path + [(gx, gy)]
+
+            # Check neighbors (4 directions)
+            for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+                nx, ny = gx + dx, gy + dy
+
+                if (nx, ny) not in visited and (nx, ny) not in wall_tiles:
+                    visited.add((nx, ny))
+                    queue.append((nx, ny, path + [(gx, gy)]))
+
+                    # Limit search to avoid lag
+                    if len(visited) > 500:
+                        return []
+
+        return []  # No path found
+
+    def _follow_path(self, walls, speed):
+        """Follow the current path."""
+        if not self.current_path:
+            return
+
+        # Get next waypoint (grid -> world coordinates)
+        next_gx, next_gy = self.current_path[0]
+        target_x = next_gx * TILE_SIZE + TILE_SIZE // 2
+        target_y = next_gy * TILE_SIZE + TILE_SIZE // 2
+
+        dx = target_x - self.rect.centerx
+        dy = target_y - self.rect.centery
+        dist = math.hypot(dx, dy)
+
+        # Reached waypoint? Move to next
+        if dist < 5:
+            self.current_path.pop(0)
+            if not self.current_path:
+                return
+            next_gx, next_gy = self.current_path[0]
+            target_x = next_gx * TILE_SIZE + TILE_SIZE // 2
+            target_y = next_gy * TILE_SIZE + TILE_SIZE // 2
+            dx = target_x - self.rect.centerx
+            dy = target_y - self.rect.centery
+            dist = math.hypot(dx, dy)
+
+        if dist > 0:
+            move_x = (dx / dist) * speed
+            move_y = (dy / dist) * speed
+            self._move(move_x, move_y, walls)
+            self.facing_angle = math.degrees(math.atan2(dy, dx))
+
     def _chase_behavior(self, walls):
-        """Move towards last seen position."""
+        """Move towards last seen position using pathfinding."""
         if not self.last_seen_pos:
             return
 
-        target_x, target_y = self.last_seen_pos
-        dx = target_x - self.rect.centerx
-        dy = target_y - self.rect.centery
-        
-        dist = math.hypot(dx, dy)
-        if dist > 0:
-            move_x = (dx / dist) * GUARD_CHASE_SPEED
-            move_y = (dy / dist) * GUARD_CHASE_SPEED
-            self._move(move_x, move_y, walls)
-            
-            # Update facing angle
-            self.facing_angle = math.degrees(math.atan2(dy, dx))
+        # Update path periodically (every 15 frames)
+        self.path_update_timer += 1
+        if self.path_update_timer >= 15 or not self.current_path:
+            self.path_update_timer = 0
+            self.current_path = self._find_path(walls, self.last_seen_pos)
+
+        self._follow_path(walls, GUARD_CHASE_SPEED)
 
     def _suspicious_behavior(self, walls):
-        """Investigate - move slowly towards last heard/seen position."""
-        if self.last_seen_pos:
-            target_x, target_y = self.last_seen_pos
-            dx = target_x - self.rect.centerx
-            dy = target_y - self.rect.centery
+        """Investigate - move slowly towards last heard/seen position using pathfinding."""
+        if not self.last_seen_pos:
+            return
 
-            dist = math.hypot(dx, dy)
-            if dist > 10:  # Move if not already at the position
-                # Move at half speed while investigating
-                investigate_speed = GUARD_SPEED * 0.7
-                move_x = (dx / dist) * investigate_speed
-                move_y = (dy / dist) * investigate_speed
-                self._move(move_x, move_y, walls)
+        # Update path less frequently while investigating
+        self.path_update_timer += 1
+        if self.path_update_timer >= 30 or not self.current_path:
+            self.path_update_timer = 0
+            self.current_path = self._find_path(walls, self.last_seen_pos)
 
-            # Update facing angle
-            self.facing_angle = math.degrees(math.atan2(dy, dx))
+        investigate_speed = GUARD_SPEED * 0.7
+        self._follow_path(walls, investigate_speed)
 
     def _patrol_behavior(self, walls):
         """Simple bounce patrol."""

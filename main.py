@@ -129,6 +129,7 @@ class Game:
             'level_complete': 'game_level_complete.mp3',
             'game_over': 'game_over.mp3',
             'guard_notice': 'guard_notice_sound.mp3',
+            'stab': 'stab.wav',
             'music': 'main_audio.mp3'
         }
 
@@ -271,6 +272,7 @@ class Game:
                 )
                 if distance < ATTACK_RANGE:
                     guard.kill()
+                    self._play_sound('stab')
 
     # ==================== UPDATE ====================
 

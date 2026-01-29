@@ -71,14 +71,23 @@ class Guard:
                 self.alert_timer = 120
 
         elif can_hear_player:
-            # Hearing noise always makes them suspicious initially
-            if self.state != 'CHASE':
-                if self.state != 'SUSPICIOUS':
-                    event = 'notice'
+            # Hearing noise - investigate and eventually chase
+            if self.state == 'PATROL':
+                # First time hearing - become suspicious
                 self.state = 'SUSPICIOUS'
-                self.suspicion_timer = 60
+                self.suspicion_timer = 45  # Shorter timer - will chase soon
                 self.last_seen_pos = player.get_center()
-        
+                event = 'notice'
+            elif self.state == 'SUSPICIOUS':
+                # Keep hearing noise - update position and tick down to chase
+                self.last_seen_pos = player.get_center()
+                self.suspicion_timer -= 1
+                if self.suspicion_timer <= 0:
+                    # Heard enough noise - start chasing!
+                    self.state = 'CHASE'
+                    self.alert_timer = 120
+                    event = 'alert'
+
         else:
             # Not seeing or hearing player
             if self.state == 'CHASE':
@@ -96,7 +105,7 @@ class Guard:
         if self.state == 'CHASE':
             self._chase_behavior(walls)
         elif self.state == 'SUSPICIOUS':
-            self._suspicious_behavior()
+            self._suspicious_behavior(walls)  # Now takes walls for movement
         else:
             self._patrol_behavior(walls)
             
@@ -120,14 +129,23 @@ class Guard:
             # Update facing angle
             self.facing_angle = math.degrees(math.atan2(dy, dx))
 
-    def _suspicious_behavior(self):
-        """Stop and look towards noise."""
+    def _suspicious_behavior(self, walls):
+        """Investigate - move slowly towards last heard/seen position."""
         if self.last_seen_pos:
             target_x, target_y = self.last_seen_pos
             dx = target_x - self.rect.centerx
             dy = target_y - self.rect.centery
+
+            dist = math.hypot(dx, dy)
+            if dist > 10:  # Move if not already at the position
+                # Move at half speed while investigating
+                investigate_speed = GUARD_SPEED * 0.7
+                move_x = (dx / dist) * investigate_speed
+                move_y = (dy / dist) * investigate_speed
+                self._move(move_x, move_y, walls)
+
+            # Update facing angle
             self.facing_angle = math.degrees(math.atan2(dy, dx))
-        # Don't move, just look
 
     def _patrol_behavior(self, walls):
         """Simple bounce patrol."""

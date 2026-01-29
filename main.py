@@ -1,0 +1,266 @@
+# THE HEIST - STEALTH PROTOCOL
+# Main Game Module
+import pygame
+import math
+from settings import (
+    SCREEN_WIDTH, SCREEN_HEIGHT, FPS, ATTACK_RANGE,
+    COLOR_BG, COLOR_HUD_TEXT, COLOR_HUD_BG,
+    STATE_PLAYING, STATE_WIN, STATE_LOSE
+)
+from player import Player
+from camera import Camera
+from level import Level
+from entities import Guard, Laser, Door, Diamond, Exit
+
+
+class Game:
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        pygame.display.set_caption("THE HEIST - STEALTH PROTOCOL")
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.Font(None, 36)
+        self.small_font = pygame.font.Font(None, 24)
+        self.running = True
+        self.game_state = STATE_PLAYING
+
+        # Initialize level and entities
+        self._init_level()
+
+    def _init_level(self):
+        """Initialize or reset the level and all entities."""
+        self.level = Level()
+        self.camera = Camera()
+        spawns = self.level.get_spawn_points()
+
+        # Create player
+        if spawns['player']:
+            self.player = Player(*spawns['player'])
+            self.player_spawn = spawns['player']
+        else:
+            self.player = Player(60, 60)
+            self.player_spawn = (60, 60)
+
+        # Create guards
+        self.guards = []
+        for pos in spawns['guards']:
+            self.guards.append(Guard(*pos))
+
+        # Create lasers
+        self.lasers = []
+        for pos in spawns['lasers']:
+            self.lasers.append(Laser(*pos))
+
+        # Create doors
+        self.doors = []
+        for pos in spawns['doors']:
+            self.doors.append(Door(*pos))
+
+        # Create diamond
+        if spawns['diamond']:
+            self.diamond = Diamond(*spawns['diamond'])
+        else:
+            self.diamond = Diamond(800, 700)
+
+        # Create exit
+        if spawns['exit']:
+            self.exit = Exit(*spawns['exit'])
+        else:
+            self.exit = Exit(1140, 840)
+
+        # Reset game state
+        self.game_state = STATE_PLAYING
+        self.door_progress = 0
+
+    def _reset_game(self):
+        """Reset the game to initial state."""
+        self._init_level()
+
+    def _handle_events(self):
+        """Handle pygame events."""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+
+            elif event.type == pygame.KEYDOWN:
+                # Restart on R or ENTER when game over
+                if self.game_state != STATE_PLAYING:
+                    if event.key == pygame.K_r or event.key == pygame.K_RETURN:
+                        self._reset_game()
+
+                # Attack (takedown) on X key
+                elif event.key == pygame.K_x:
+                    self._handle_attack()
+
+    def _handle_attack(self):
+        """Handle player attack - kill nearby guards."""
+        player_center = self.player.get_center()
+
+        for guard in self.guards:
+            if guard.is_alive():
+                guard_center = guard.get_center()
+                distance = math.sqrt(
+                    (player_center[0] - guard_center[0]) ** 2 +
+                    (player_center[1] - guard_center[1]) ** 2
+                )
+                if distance < ATTACK_RANGE:
+                    guard.kill()
+
+    def _update(self, dt):
+        """Update game state."""
+        if self.game_state != STATE_PLAYING:
+            return
+
+        keys = pygame.key.get_pressed()
+
+        # Update player
+        self.player.update(keys, self.level.get_walls(), self.doors)
+
+        # Update camera
+        self.camera.update(self.player)
+
+        # Update guards
+        for guard in self.guards:
+            guard.update(self.level.get_walls())
+
+        # Update lasers
+        for laser in self.lasers:
+            laser.update(dt)
+
+        # Update doors
+        holding_space = keys[pygame.K_SPACE]
+        for door in self.doors:
+            progress = door.update(self.player, holding_space, dt)
+            if progress > 0:
+                self.door_progress = progress
+
+        # If no door is being unlocked, decay progress display
+        if not holding_space:
+            self.door_progress = max(0, self.door_progress - dt / 500)
+
+        # Update diamond
+        self.diamond.update(self.player)
+
+        # Check collisions
+        self._check_collisions()
+
+        # Check win condition
+        if self.exit.check_win(self.player, self.diamond):
+            self.game_state = STATE_WIN
+
+    def _check_collisions(self):
+        """Check for deadly collisions."""
+        player_rect = self.player.get_rect()
+
+        # Check guard collision
+        for guard in self.guards:
+            if guard.is_alive() and player_rect.colliderect(guard.get_rect()):
+                self.game_state = STATE_LOSE
+                return
+
+        # Check laser collision
+        for laser in self.lasers:
+            if laser.is_dangerous() and player_rect.colliderect(laser.get_rect()):
+                self.game_state = STATE_LOSE
+                return
+
+    def _draw(self):
+        """Draw everything."""
+        # Clear screen
+        self.screen.fill(COLOR_BG)
+
+        # Draw level (walls)
+        self.level.draw(self.screen, self.camera)
+
+        # Draw entities
+        for laser in self.lasers:
+            laser.draw(self.screen, self.camera)
+
+        for door in self.doors:
+            door.draw(self.screen, self.camera)
+
+        self.diamond.draw(self.screen, self.camera)
+        self.exit.draw(self.screen, self.camera, self.diamond.is_collected())
+
+        for guard in self.guards:
+            guard.draw(self.screen, self.camera)
+
+        # Draw player
+        self.player.draw(self.screen, self.camera)
+
+        # Draw HUD
+        self._draw_hud()
+
+        # Draw game state overlay
+        if self.game_state == STATE_WIN:
+            self._draw_overlay("YOU WIN!", (0, 255, 0))
+        elif self.game_state == STATE_LOSE:
+            self._draw_overlay("GAME OVER", (255, 0, 0))
+
+        pygame.display.flip()
+
+    def _draw_hud(self):
+        """Draw minimal HUD."""
+        # Diamond status
+        diamond_text = "DIAMOND: COLLECTED" if self.diamond.is_collected() else "DIAMOND: NOT COLLECTED"
+        diamond_color = (0, 255, 255) if self.diamond.is_collected() else (150, 150, 150)
+        text_surface = self.small_font.render(diamond_text, True, diamond_color)
+        self.screen.blit(text_surface, (10, 10))
+
+        # Door unlock progress bar (only show when unlocking)
+        if self.door_progress > 0:
+            bar_width = 150
+            bar_height = 15
+            bar_x = 10
+            bar_y = 35
+
+            # Background
+            pygame.draw.rect(self.screen, COLOR_HUD_BG, (bar_x, bar_y, bar_width, bar_height))
+            # Progress
+            progress_width = int(bar_width * min(self.door_progress, 1.0))
+            pygame.draw.rect(self.screen, (139, 69, 19), (bar_x, bar_y, progress_width, bar_height))
+            # Border
+            pygame.draw.rect(self.screen, COLOR_HUD_TEXT, (bar_x, bar_y, bar_width, bar_height), 1)
+            # Label
+            label = self.small_font.render("UNLOCKING...", True, COLOR_HUD_TEXT)
+            self.screen.blit(label, (bar_x + bar_width + 10, bar_y - 2))
+
+        # Controls hint
+        controls = "WASD: Move | X: Takedown | SPACE: Unlock Door"
+        controls_surface = self.small_font.render(controls, True, (100, 100, 100))
+        self.screen.blit(controls_surface, (10, SCREEN_HEIGHT - 25))
+
+    def _draw_overlay(self, text, color):
+        """Draw game over/win overlay."""
+        # Semi-transparent background
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        overlay.fill((0, 0, 0))
+        overlay.set_alpha(180)
+        self.screen.blit(overlay, (0, 0))
+
+        # Main text
+        text_surface = self.font.render(text, True, color)
+        text_rect = text_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 30))
+        self.screen.blit(text_surface, text_rect)
+
+        # Restart instruction
+        restart_text = "Press R or ENTER to restart"
+        restart_surface = self.small_font.render(restart_text, True, COLOR_HUD_TEXT)
+        restart_rect = restart_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 20))
+        self.screen.blit(restart_surface, restart_rect)
+
+    def run(self):
+        """Main game loop."""
+        while self.running:
+            dt = self.clock.tick(FPS)
+
+            self._handle_events()
+            self._update(dt)
+            self._draw()
+
+        pygame.quit()
+
+
+if __name__ == "__main__":
+    game = Game()
+    game.run()

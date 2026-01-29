@@ -1,6 +1,6 @@
 # THE HEIST - Player Module
 import pygame
-from settings import TILE_SIZE, PLAYER_SPEED, COLOR_PLAYER
+from settings import TILE_SIZE, PLAYER_SPEED, PLAYER_SNEAK_SPEED, COLOR_PLAYER
 
 
 class Player:
@@ -10,22 +10,27 @@ class Player:
         self.width = TILE_SIZE
         self.height = TILE_SIZE
         self.speed = PLAYER_SPEED
+        self.sneaking = False
         self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
 
     def update(self, keys, walls, doors=None):
         """Update player position based on input and collisions."""
         dx = 0
         dy = 0
+        
+        # Check for sneaking
+        self.sneaking = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+        current_speed = PLAYER_SNEAK_SPEED if self.sneaking else self.speed
 
         # Handle movement input (WASD and Arrow keys)
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            dx = -self.speed
+            dx = -current_speed
         if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            dx = self.speed
+            dx = current_speed
         if keys[pygame.K_UP] or keys[pygame.K_w]:
-            dy = -self.speed
+            dy = -current_speed
         if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            dy = self.speed
+            dy = current_speed
 
         # Move horizontally and check collision
         self.x += dx
@@ -90,3 +95,7 @@ class Player:
         self.y = y
         self.rect.x = x
         self.rect.y = y
+
+    def is_sneaking(self):
+        """Return True if player is sneaking."""
+        return self.sneaking

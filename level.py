@@ -1,10 +1,10 @@
 # THE HEIST - Level Module
 import pygame
-from settings import TILE_SIZE, COLOR_WALL, MAP_DATA
+from settings import TILE_SIZE, COLOR_WALL
 
 
 class Level:
-    def __init__(self):
+    def __init__(self, map_data):
         self.walls = []
         self.spawn_points = {
             'player': None,
@@ -14,11 +14,12 @@ class Level:
             'lasers': [],
             'doors': []
         }
+        self.map_data = map_data
         self._parse_map()
 
     def _parse_map(self):
         """Parse MAP_DATA and create wall rects and spawn points."""
-        for row_idx, row in enumerate(MAP_DATA):
+        for row_idx, row in enumerate(self.map_data):
             for col_idx, tile in enumerate(row):
                 x = col_idx * TILE_SIZE
                 y = row_idx * TILE_SIZE

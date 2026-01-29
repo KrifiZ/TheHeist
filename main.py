@@ -5,7 +5,8 @@ import math
 from settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, ATTACK_RANGE,
     COLOR_BG, COLOR_HUD_TEXT, COLOR_HUD_BG,
-    STATE_PLAYING, STATE_WIN, STATE_LOSE
+    STATE_MENU, STATE_PLAYING, STATE_WIN, STATE_LOSE, STATE_LEVEL_COMPLETE,
+    LEVELS
 )
 from player import Player
 from camera import Camera
@@ -22,14 +23,15 @@ class Game:
         self.font = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
         self.running = True
-        self.game_state = STATE_PLAYING
+        self.current_level_index = 0
+        self.game_state = STATE_MENU
 
         # Initialize level and entities
-        self._init_level()
+        # self._init_level() # Deferred until start game
 
     def _init_level(self):
         """Initialize or reset the level and all entities."""
-        self.level = Level()
+        self.level = Level(LEVELS[self.current_level_index])
         self.camera = Camera()
         spawns = self.level.get_spawn_points()
 
@@ -83,13 +85,31 @@ class Game:
                 self.running = False
 
             elif event.type == pygame.KEYDOWN:
+                # Menu controls
+                if self.game_state == STATE_MENU:
+                    if event.key == pygame.K_RETURN:
+                        self.current_level_index = 0
+                        self._init_level()
+                        self.game_state = STATE_PLAYING
+                
                 # Restart on R or ENTER when game over
-                if self.game_state != STATE_PLAYING:
+                elif self.game_state in [STATE_LOSE, STATE_WIN]:
                     if event.key == pygame.K_r or event.key == pygame.K_RETURN:
-                        self._reset_game()
+                        self.current_level_index = 0
+                        self._init_level()
+                        self.game_state = STATE_PLAYING
+                        
+                elif self.game_state == STATE_LEVEL_COMPLETE:
+                    if event.key == pygame.K_RETURN:
+                        self.current_level_index += 1
+                        if self.current_level_index >= len(LEVELS):
+                            self.game_state = STATE_WIN
+                        else:
+                            self._init_level()
+                            self.game_state = STATE_PLAYING
 
                 # Attack (takedown) on X key
-                elif event.key == pygame.K_x:
+                elif event.key == pygame.K_x and self.game_state == STATE_PLAYING:
                     self._handle_attack()
 
     def _handle_attack(self):
@@ -121,7 +141,7 @@ class Game:
 
         # Update guards
         for guard in self.guards:
-            guard.update(self.level.get_walls())
+            guard.update(self.level.get_walls(), self.player)
 
         # Update lasers
         for laser in self.lasers:
@@ -146,7 +166,10 @@ class Game:
 
         # Check win condition
         if self.exit.check_win(self.player, self.diamond):
-            self.game_state = STATE_WIN
+            if self.current_level_index < len(LEVELS) - 1:
+                self.game_state = STATE_LEVEL_COMPLETE
+            else:
+                self.game_state = STATE_WIN
 
     def _check_collisions(self):
         """Check for deadly collisions."""
@@ -166,6 +189,11 @@ class Game:
 
     def _draw(self):
         """Draw everything."""
+        if self.game_state == STATE_MENU:
+            self._draw_menu()
+            pygame.display.flip()
+            return
+
         # Clear screen
         self.screen.fill(COLOR_BG)
 
@@ -193,11 +221,37 @@ class Game:
 
         # Draw game state overlay
         if self.game_state == STATE_WIN:
-            self._draw_overlay("YOU WIN!", (0, 255, 0))
+            self._draw_overlay("ALL LEVELS COMPLETED!", (0, 255, 0))
         elif self.game_state == STATE_LOSE:
             self._draw_overlay("GAME OVER", (255, 0, 0))
+        elif self.game_state == STATE_LEVEL_COMPLETE:
+            self._draw_overlay("LEVEL COMPLETE", (0, 255, 0), "Press ENTER for next level")
 
         pygame.display.flip()
+
+    def _draw_menu(self):
+        """Draw main menu."""
+        self.screen.fill(COLOR_BG)
+        title = self.font.render("THE HEIST - STEALTH PROTOCOL", True, (255, 255, 0))
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50))
+        self.screen.blit(title, title_rect)
+
+        start_text = self.small_font.render("Press ENTER to Start", True, (255, 255, 255))
+        start_rect = start_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 20))
+        self.screen.blit(start_text, start_rect)
+        
+        controls = [
+            "Controls:",
+            "WASD / Arrows: Move",
+            "SHIFT: Sneak (Silent)",
+            "X: Takedown",
+            "SPACE (hold): Unlock Door"
+        ]
+        
+        for i, line in enumerate(controls):
+            text = self.small_font.render(line, True, (150, 150, 150))
+            rect = text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 80 + i * 25))
+            self.screen.blit(text, rect)
 
     def _draw_hud(self):
         """Draw minimal HUD."""
@@ -230,7 +284,7 @@ class Game:
         controls_surface = self.small_font.render(controls, True, (100, 100, 100))
         self.screen.blit(controls_surface, (10, SCREEN_HEIGHT - 25))
 
-    def _draw_overlay(self, text, color):
+    def _draw_overlay(self, text, color, subtext="Press R or ENTER to restart"):
         """Draw game over/win overlay."""
         # Semi-transparent background
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -244,8 +298,7 @@ class Game:
         self.screen.blit(text_surface, text_rect)
 
         # Restart instruction
-        restart_text = "Press R or ENTER to restart"
-        restart_surface = self.small_font.render(restart_text, True, COLOR_HUD_TEXT)
+        restart_surface = self.small_font.render(subtext, True, COLOR_HUD_TEXT)
         restart_rect = restart_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 20))
         self.screen.blit(restart_surface, restart_rect)
 

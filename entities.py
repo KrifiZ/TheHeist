@@ -34,11 +34,17 @@ class Guard:
         self.suspicion_timer = 0
         self.last_seen_pos = None
         self.alert_timer = 0
+        
+        # Events
+        self.triggered_notice = False # For "?" sound
+        self.triggered_alert = False  # For "!" sound (if we have one, or just general alert)
 
     def update(self, walls, player):
-        """Update guard AI and movement."""
+        """Update guard AI and movement. Returns 'notice' or 'alert' event string if triggered."""
         if not self.alive:
-            return
+            return None
+
+        event = None
 
         # 1. Sensory Check
         can_see_player = self._can_see(player, walls)
@@ -46,24 +52,45 @@ class Guard:
 
         # 2. State Transition Logic
         if can_see_player:
-            self.state = 'CHASE'
-            self.last_seen_pos = player.get_center()
-            self.alert_timer = 120  # Chase for 2 seconds after losing sight (60fps)
-        elif can_hear_player and self.state != 'CHASE':
-            self.state = 'SUSPICIOUS'
-            self.suspicion_timer = 60  # Be suspicious for 1 second
-            self.last_seen_pos = player.get_center()
+            if self.state == 'PATROL':
+                # Grace Period: First sighting triggers Suspicious
+                self.state = 'SUSPICIOUS'
+                self.suspicion_timer = 60  # 1 second grace period
+                self.last_seen_pos = player.get_center()
+                event = 'notice'
+            elif self.state == 'SUSPICIOUS':
+                # If still seeing player while suspicious, tick down grace period
+                self.suspicion_timer -= 1
+                self.last_seen_pos = player.get_center()
+                if self.suspicion_timer <= 0:
+                    self.state = 'CHASE'
+                    self.alert_timer = 120
+                    event = 'alert'
+            elif self.state == 'CHASE':
+                self.last_seen_pos = player.get_center()
+                self.alert_timer = 120
+
+        elif can_hear_player:
+            # Hearing noise always makes them suspicious initially
+            if self.state != 'CHASE':
+                if self.state != 'SUSPICIOUS':
+                    event = 'notice'
+                self.state = 'SUSPICIOUS'
+                self.suspicion_timer = 60
+                self.last_seen_pos = player.get_center()
         
-        # State decay
-        if self.state == 'CHASE' and not can_see_player:
-            self.alert_timer -= 1
-            if self.alert_timer <= 0:
-                self.state = 'PATROL'
-        
-        if self.state == 'SUSPICIOUS':
-            self.suspicion_timer -= 1
-            if self.suspicion_timer <= 0:
-                self.state = 'PATROL'
+        else:
+            # Not seeing or hearing player
+            if self.state == 'CHASE':
+                # Lost sight, keep chasing for a bit
+                self.alert_timer -= 1
+                if self.alert_timer <= 0:
+                    self.state = 'PATROL'
+            elif self.state == 'SUSPICIOUS':
+                # Lost sight/sound, return to patrol after a bit
+                self.suspicion_timer -= 1
+                if self.suspicion_timer <= 0:
+                    self.state = 'PATROL'
 
         # 3. Action Execution
         if self.state == 'CHASE':
@@ -72,6 +99,8 @@ class Guard:
             self._suspicious_behavior()
         else:
             self._patrol_behavior(walls)
+            
+        return event
 
     def _chase_behavior(self, walls):
         """Move towards last seen position."""
@@ -98,7 +127,7 @@ class Guard:
             dx = target_x - self.rect.centerx
             dy = target_y - self.rect.centery
             self.facing_angle = math.degrees(math.atan2(dy, dx))
-        # Don't move
+        # Don't move, just look
 
     def _patrol_behavior(self, walls):
         """Simple bounce patrol."""
@@ -123,7 +152,6 @@ class Guard:
         if collision or random.random() < 0.005:
             # Change direction
             possibilities = ['left', 'right', 'up', 'down']
-            # Try not to reverse immediately unless stuck
             self.patrol_direction = random.choice(possibilities)
 
     def _move(self, dx, dy, walls):
@@ -153,7 +181,7 @@ class Guard:
         return collided
 
     def _can_see(self, player, walls):
-        """Check line of sight to player."""
+        """Check line of sight to player with Vision Cone."""
         player_center = player.get_center()
         guard_center = self.rect.center
         
@@ -172,9 +200,8 @@ class Guard:
             return False
             
         # Raycast for walls
-        # Simple line check: sample points along the line
         steps = int(dist / (TILE_SIZE / 2))
-        for i in range(1, steps):
+        for i in range(1, steps + 1): # Check all the way to player
             check_x = guard_center[0] + (dx * i / steps)
             check_y = guard_center[1] + (dy * i / steps)
             check_rect = pygame.Rect(check_x - 1, check_y - 1, 2, 2)
@@ -186,29 +213,20 @@ class Guard:
         return True
 
     def _can_hear(self, player):
-        """Check if can hear player."""
-        if player.is_sneaking():
+        """Check if can hear player based on noise radius."""
+        noise_radius = player.get_noise_radius()
+        if noise_radius == 0:
             return False
             
-        # If player is not moving, can't hear (assuming keys check in player update implies movement? 
-        # Actually player.update handles movement. We can't easily know if they moved THIS frame 
-        # without storing last pos. For now, assume if not sneaking and close, they are loud.
-        # But wait, if they are standing still they are not sneaking but also silent.
-        # Let's simplify: If player key pressed? No access to keys here.
-        # Approximation: Check if player speed > 0? No access.
-        # Better: Assume player always makes noise unless holding shift. 
-        # This acts as a 'breathing' noise or 'foot shuffling'. 
-        # To be precise, we should only hear moving players.
-        # But for this simple implementation: If distance < range and NOT sneaking."""
-        
         player_center = player.get_center()
         guard_center = self.rect.center
         dist = math.hypot(player_center[0] - guard_center[0], player_center[1] - guard_center[1])
         
-        return dist < GUARD_HEARING_RANGE
+        # Check if player noise reaches the guard
+        return dist < noise_radius
 
     def draw(self, screen, camera):
-        """Draw guard with status."""
+        """Draw guard with status and Barks."""
         draw_rect = camera.apply(self.rect)
         
         color = COLOR_GUARD
@@ -229,11 +247,17 @@ class Guard:
             end_y = center[1] + math.sin(math.radians(self.facing_angle)) * 15
             pygame.draw.line(screen, (255, 255, 0), center, (end_x, end_y), 2)
             
-            # Draw ! if suspicious or alert
-            if self.state in ['CHASE', 'SUSPICIOUS']:
-                font = pygame.font.Font(None, 36)
-                text = font.render("!", True, (255, 255, 0))
-                screen.blit(text, (draw_rect.x + 10, draw_rect.y - 30))
+            # Draw Vision Cone (Debug/Feedback)
+            # (Optional, but helps "Vision Cone" feel)
+            
+            # BARK SYSTEM
+            font = pygame.font.Font(None, 36)
+            if self.state == 'SUSPICIOUS':
+                text = font.render("?", True, (255, 255, 0)) # Yellow ?
+                screen.blit(text, (draw_rect.centerx - text.get_width()//2, draw_rect.top - 25))
+            elif self.state == 'CHASE':
+                text = font.render("!", True, (255, 0, 0))   # Red !
+                screen.blit(text, (draw_rect.centerx - text.get_width()//2, draw_rect.top - 25))
 
     def kill(self):
         """Kill the guard."""
@@ -357,9 +381,11 @@ class Diamond:
         self.collected = False
 
     def update(self, player):
-        """Check if player collects the diamond."""
+        """Check if player collects the diamond. Returns True if just collected."""
         if not self.collected and self.rect.colliderect(player.get_rect()):
             self.collected = True
+            return True
+        return False
 
     def draw(self, screen, camera):
         """Draw diamond if not collected."""

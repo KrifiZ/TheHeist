@@ -2,6 +2,7 @@
 # Main Game Module
 import pygame
 import math
+import os
 from settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, ATTACK_RANGE,
     COLOR_BG, COLOR_HUD_TEXT, COLOR_HUD_BG,
@@ -17,6 +18,7 @@ from entities import Guard, Laser, Door, Diamond, Exit
 class Game:
     def __init__(self):
         pygame.init()
+        pygame.mixer.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("THE HEIST - STEALTH PROTOCOL")
         self.clock = pygame.time.Clock()
@@ -25,9 +27,46 @@ class Game:
         self.running = True
         self.current_level_index = 0
         self.game_state = STATE_MENU
+        
+        # Load Sounds
+        self.sounds = {}
+        self._load_sounds()
+        
+        # Play background music
+        if 'music' in self.sounds:
+            pygame.mixer.music.load(os.path.join('sounds', 'main_audio.mp3'))
+            pygame.mixer.music.set_volume(0.5)
+            pygame.mixer.music.play(-1) # Loop forever
 
-        # Initialize level and entities
-        # self._init_level() # Deferred until start game
+    def _load_sounds(self):
+        """Load all game sounds."""
+        sound_files = {
+            'collect': 'collect_diamond.mp3',
+            'laser_death': 'game_laser_shot.mp3',
+            'level_complete': 'game_level_complete.mp3',
+            'game_over': 'game_over.mp3',
+            'guard_notice': 'guard_notice_sound.mp4', # Might fail if MP4 is video-only container
+            'music': 'main_audio.mp3'
+        }
+        
+        for name, filename in sound_files.items():
+            path = os.path.join('sounds', filename)
+            if os.path.exists(path):
+                if name == 'music':
+                    # Music is streamed, not loaded as Sound object
+                    self.sounds['music'] = path
+                else:
+                    try:
+                        self.sounds[name] = pygame.mixer.Sound(path)
+                    except pygame.error as e:
+                        print(f"Warning: Could not load sound {filename}: {e}")
+            else:
+                print(f"Warning: Sound file not found: {path}")
+
+    def _play_sound(self, name):
+        """Play a sound if it exists."""
+        if name in self.sounds:
+            self.sounds[name].play()
 
     def _init_level(self):
         """Initialize or reset the level and all entities."""
@@ -104,6 +143,7 @@ class Game:
                         self.current_level_index += 1
                         if self.current_level_index >= len(LEVELS):
                             self.game_state = STATE_WIN
+                            self._play_sound('level_complete') # Or win sound if separate
                         else:
                             self._init_level()
                             self.game_state = STATE_PLAYING
@@ -141,7 +181,12 @@ class Game:
 
         # Update guards
         for guard in self.guards:
-            guard.update(self.level.get_walls(), self.player)
+            event = guard.update(self.level.get_walls(), self.player)
+            if event == 'notice':
+                self._play_sound('guard_notice')
+            elif event == 'alert':
+                # Can play a sharper alert sound if available, reusing notice for now or adding another
+                self._play_sound('guard_notice') 
 
         # Update lasers
         for laser in self.lasers:
@@ -159,7 +204,8 @@ class Game:
             self.door_progress = max(0, self.door_progress - dt / 500)
 
         # Update diamond
-        self.diamond.update(self.player)
+        if self.diamond.update(self.player):
+            self._play_sound('collect')
 
         # Check collisions
         self._check_collisions()
@@ -168,8 +214,10 @@ class Game:
         if self.exit.check_win(self.player, self.diamond):
             if self.current_level_index < len(LEVELS) - 1:
                 self.game_state = STATE_LEVEL_COMPLETE
+                self._play_sound('level_complete')
             else:
                 self.game_state = STATE_WIN
+                self._play_sound('level_complete') # Reusing complete sound for win
 
     def _check_collisions(self):
         """Check for deadly collisions."""
@@ -179,12 +227,15 @@ class Game:
         for guard in self.guards:
             if guard.is_alive() and player_rect.colliderect(guard.get_rect()):
                 self.game_state = STATE_LOSE
+                self._play_sound('game_over')
                 return
 
         # Check laser collision
         for laser in self.lasers:
             if laser.is_dangerous() and player_rect.colliderect(laser.get_rect()):
                 self.game_state = STATE_LOSE
+                self._play_sound('laser_death')
+                self._play_sound('game_over')
                 return
 
     def _draw(self):
@@ -242,8 +293,8 @@ class Game:
         
         controls = [
             "Controls:",
-            "WASD / Arrows: Move",
-            "SHIFT: Sneak (Silent)",
+            "WASD / Arrows: Move (Silent)",
+            "SHIFT: Run (Loud)",
             "X: Takedown",
             "SPACE (hold): Unlock Door"
         ]
@@ -280,7 +331,7 @@ class Game:
             self.screen.blit(label, (bar_x + bar_width + 10, bar_y - 2))
 
         # Controls hint
-        controls = "WASD: Move | X: Takedown | SPACE: Unlock Door"
+        controls = "WASD: Move | SHIFT: Run | X: Takedown | SPACE: Unlock Door"
         controls_surface = self.small_font.render(controls, True, (100, 100, 100))
         self.screen.blit(controls_surface, (10, SCREEN_HEIGHT - 25))
 

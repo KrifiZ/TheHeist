@@ -1,6 +1,6 @@
 # THE HEIST - Player Module
 import pygame
-from settings import TILE_SIZE, PLAYER_SPEED, PLAYER_SNEAK_SPEED, COLOR_PLAYER
+from settings import TILE_SIZE, PLAYER_SPEED, PLAYER_RUN_SPEED, PLAYER_RUN_NOISE, COLOR_PLAYER
 
 
 class Player:
@@ -10,7 +10,7 @@ class Player:
         self.width = TILE_SIZE
         self.height = TILE_SIZE
         self.speed = PLAYER_SPEED
-        self.sneaking = False
+        self.noise_radius = 0
         self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
 
     def update(self, keys, walls, doors=None):
@@ -18,9 +18,17 @@ class Player:
         dx = 0
         dy = 0
         
-        # Check for sneaking
-        self.sneaking = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
-        current_speed = PLAYER_SNEAK_SPEED if self.sneaking else self.speed
+        # Check for running (Shift)
+        is_running = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+        
+        if is_running:
+            self.speed = PLAYER_RUN_SPEED
+            self.noise_radius = PLAYER_RUN_NOISE
+        else:
+            self.speed = PLAYER_SPEED
+            self.noise_radius = 0
+
+        current_speed = self.speed
 
         # Handle movement input (WASD and Arrow keys)
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
@@ -80,6 +88,12 @@ class Player:
         """Draw player at camera-adjusted position."""
         draw_rect = camera.apply(self.rect)
         pygame.draw.rect(screen, COLOR_PLAYER, draw_rect)
+        
+        # DEBUG: Draw noise radius
+        if self.noise_radius > 0:
+            center = draw_rect.center
+            # Draw a thin circle representing noise
+            pygame.draw.circle(screen, (255, 255, 255), center, self.noise_radius, 1)
 
     def get_rect(self):
         """Return collision rect."""
@@ -96,6 +110,10 @@ class Player:
         self.rect.x = x
         self.rect.y = y
 
+    def get_noise_radius(self):
+        """Return current noise radius."""
+        return self.noise_radius
+
     def is_sneaking(self):
-        """Return True if player is sneaking."""
-        return self.sneaking
+        """Return True if player is sneaking (silent). For backward compatibility."""
+        return self.noise_radius == 0

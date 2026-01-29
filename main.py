@@ -45,7 +45,7 @@ class Game:
             'laser_death': 'game_laser_shot.mp3',
             'level_complete': 'game_level_complete.mp3',
             'game_over': 'game_over.mp3',
-            'guard_notice': 'guard_notice_sound.mp4', # Might fail if MP4 is video-only container
+            'guard_notice': 'guard_notice_sound.mp3', # Might fail if MP4 is video-only container
             'music': 'main_audio.mp3'
         }
         
@@ -182,10 +182,8 @@ class Game:
         # Update guards
         for guard in self.guards:
             event = guard.update(self.level.get_walls(), self.player)
-            if event == 'notice':
-                self._play_sound('guard_notice')
-            elif event == 'alert':
-                # Can play a sharper alert sound if available, reusing notice for now or adding another
+            # Sound only plays when guard goes from "?" to "!" (starts chasing)
+            if event == 'alert':
                 self._play_sound('guard_notice') 
 
         # Update lasers
@@ -293,9 +291,9 @@ class Game:
         
         controls = [
             "Controls:",
-            "WASD / Arrows: Move (Silent)",
-            "SHIFT: Run (Loud)",
-            "X: Takedown",
+            "WASD / Arrows: Move (Silent - guards won't hear you)",
+            "SHIFT + Move: RUN (LOUD! Guards WILL hear you!)",
+            "X: Takedown (sneak up behind guards)",
             "SPACE (hold): Unlock Door"
         ]
         
@@ -311,6 +309,29 @@ class Game:
         diamond_color = (0, 255, 255) if self.diamond.is_collected() else (150, 150, 150)
         text_surface = self.small_font.render(diamond_text, True, diamond_color)
         self.screen.blit(text_surface, (10, 10))
+
+        # RUNNING/NOISE WARNING - prominent indicator when player is running
+        if self.player.get_noise_radius() > 0:
+            # Pulsing red warning
+            pulse = abs(pygame.time.get_ticks() % 500 - 250) / 250  # 0 to 1 pulse
+            red_intensity = int(150 + 105 * pulse)
+            warning_color = (red_intensity, 50, 50)
+
+            # Draw warning background
+            warning_rect = pygame.Rect(SCREEN_WIDTH - 220, 10, 210, 50)
+            pygame.draw.rect(self.screen, warning_color, warning_rect)
+            pygame.draw.rect(self.screen, (255, 100, 100), warning_rect, 3)
+
+            # Warning text
+            warning_text = self.font.render("!! RUNNING !!", True, (255, 255, 255))
+            self.screen.blit(warning_text, (SCREEN_WIDTH - 205, 15))
+
+            noise_text = self.small_font.render("Guards can HEAR you!", True, (255, 200, 200))
+            self.screen.blit(noise_text, (SCREEN_WIDTH - 200, 38))
+        else:
+            # Quiet/stealth indicator
+            stealth_text = self.small_font.render("SILENT", True, (100, 200, 100))
+            self.screen.blit(stealth_text, (SCREEN_WIDTH - 60, 15))
 
         # Door unlock progress bar (only show when unlocking)
         if self.door_progress > 0:
@@ -330,8 +351,8 @@ class Game:
             label = self.small_font.render("UNLOCKING...", True, COLOR_HUD_TEXT)
             self.screen.blit(label, (bar_x + bar_width + 10, bar_y - 2))
 
-        # Controls hint
-        controls = "WASD: Move | SHIFT: Run | X: Takedown | SPACE: Unlock Door"
+        # Controls hint - updated to emphasize SHIFT risk
+        controls = "WASD: Move (Silent) | SHIFT: Run (LOUD!) | X: Takedown | SPACE: Unlock"
         controls_surface = self.small_font.render(controls, True, (100, 100, 100))
         self.screen.blit(controls_surface, (10, SCREEN_HEIGHT - 25))
 

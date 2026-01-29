@@ -88,12 +88,20 @@ class Player:
         """Draw player at camera-adjusted position."""
         draw_rect = camera.apply(self.rect)
         pygame.draw.rect(screen, COLOR_PLAYER, draw_rect)
-        
-        # DEBUG: Draw noise radius
+
+        # Draw noise radius when running - RED pulsing danger zone
         if self.noise_radius > 0:
             center = draw_rect.center
-            # Draw a thin circle representing noise
-            pygame.draw.circle(screen, (255, 255, 255), center, self.noise_radius, 1)
+            # Pulsing effect - makes it clear this is dangerous
+            pulse = abs(pygame.time.get_ticks() % 400 - 200) / 200  # 0 to 1
+            alpha_surface = pygame.Surface((self.noise_radius * 2, self.noise_radius * 2), pygame.SRCALPHA)
+            # Semi-transparent red fill
+            pygame.draw.circle(alpha_surface, (255, 50, 50, int(30 + 20 * pulse)),
+                             (self.noise_radius, self.noise_radius), self.noise_radius)
+            # Red border
+            pygame.draw.circle(alpha_surface, (255, 100, 100, int(100 + 50 * pulse)),
+                             (self.noise_radius, self.noise_radius), self.noise_radius, 3)
+            screen.blit(alpha_surface, (center[0] - self.noise_radius, center[1] - self.noise_radius))
 
     def get_rect(self):
         """Return collision rect."""

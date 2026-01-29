@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"c:\\\\Users\\\\UM_LODZI\\\\Desktop\\\\TheHeist\" log --oneline -20)",
+      "Bash(python -m py_compile:*)"
+    ]
+  }
+}

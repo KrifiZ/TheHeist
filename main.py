@@ -4,10 +4,11 @@ import pygame
 import math
 import os
 import json
+import random
 from settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, ATTACK_RANGE,
     COLOR_BG, COLOR_HUD_TEXT, COLOR_HUD_BG,
-    STATE_INTRO, STATE_MENU, STATE_PLAYING, STATE_WIN, STATE_LOSE, STATE_LEVEL_COMPLETE,
+    STATE_INTRO, STATE_MENU, STATE_PLAYING, STATE_WIN, STATE_LOSE, STATE_LEVEL_COMPLETE, STATE_ENDING,
     LEVELS, SAVE_FILE
 )
 from player import Player
@@ -45,6 +46,38 @@ and prove that there is no lock
 you cannot pick..."""
 
 
+# Ending story text after completing all levels
+ENDING_TEXT = """MISSION ACCOMPLISHED
+
+The alarms blare behind you, but it's too late.
+The "HEART OF THE LEVIATHAN" is yours.
+
+As you vanish into the night, the weight
+of the diamond in your pocket feels like
+justice served.
+
+IRONCLAD HOLDINGS believed they were
+untouchable. They believed their fortress
+was impenetrable. They were wrong.
+
+You are THE GHOST.
+
+And ghosts leave no trace.
+
+The world will wake tomorrow to headlines
+of the greatest heist in history.
+But they will never know your name.
+
+Some say you're a myth.
+Some say you're a legend.
+
+But you know the truth...
+
+You are simply the best at what you do.
+
+THE END"""
+
+
 class Game:
     def __init__(self):
         pygame.init()
@@ -71,6 +104,11 @@ class Game:
         # Menu selection
         self.menu_selection = 0  # 0 = New Game, 1 = Continue
         self.has_save = self._check_save_exists()
+
+        # Ending cutscene
+        self.ending_y = SCREEN_HEIGHT
+        self.ending_speed = 0.6
+        self.ending_complete = False
 
         # Load Sounds
         self.sounds = {}
@@ -130,7 +168,8 @@ class Game:
             'game_over': 'game_over.mp3',
             'guard_notice': 'guard_notice_sound.mp3',
             'stab': 'stab.wav',
-            'music': 'main_audio.mp3'
+            'music': 'main_audio.mp3',
+            'victory_music': 'victory_end_game_screen.mp3'
         }
 
         for name, filename in sound_files.items():
@@ -195,6 +234,20 @@ class Game:
         """Reset the game to initial state."""
         self._init_level()
 
+    def _start_ending(self):
+        """Start the ending cutscene."""
+        self.game_state = STATE_ENDING
+        self.ending_y = SCREEN_HEIGHT
+        self.ending_complete = False
+        self._delete_save()  # Clear save after completing the game
+        # Switch to victory music
+        pygame.mixer.music.stop()
+        victory_music_path = os.path.join('sounds', 'victory_end_game_screen.mp3')
+        if os.path.exists(victory_music_path):
+            pygame.mixer.music.load(victory_music_path)
+            pygame.mixer.music.set_volume(0.6)
+            pygame.mixer.music.play(-1)
+
     # ==================== EVENT HANDLING ====================
 
     def _handle_events(self):
@@ -230,10 +283,16 @@ class Game:
                                 self.current_level_index = 0
                                 self._init_level()
 
+                # Skip ending on ENTER/SPACE/ESC
+                elif self.game_state == STATE_ENDING:
+                    if event.key in [pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE]:
+                        self.game_state = STATE_WIN
+
                 # Restart on R or ENTER when game over
                 elif self.game_state in [STATE_LOSE, STATE_WIN]:
                     if event.key == pygame.K_r or event.key == pygame.K_RETURN:
                         self.current_level_index = 0
+                        self._delete_save()
                         self._init_level()
                     elif event.key == pygame.K_ESCAPE:
                         self.game_state = STATE_MENU
@@ -244,8 +303,7 @@ class Game:
                         self.current_level_index += 1
                         self._save_game()  # Save progress
                         if self.current_level_index >= len(LEVELS):
-                            self.game_state = STATE_WIN
-                            self._play_sound('level_complete')
+                            self._start_ending()
                         else:
                             self._init_level()
 
@@ -281,6 +339,11 @@ class Game:
         # Update intro
         if self.game_state == STATE_INTRO:
             self._update_intro(dt)
+            return
+
+        # Update ending
+        if self.game_state == STATE_ENDING:
+            self._update_ending(dt)
             return
 
         if self.game_state != STATE_PLAYING:
@@ -335,6 +398,15 @@ class Game:
             if self.intro_y < -text_height - 100:
                 self.game_state = STATE_MENU
 
+    def _update_ending(self, dt):
+        """Update ending cutscene animation."""
+        self.ending_y -= self.ending_speed
+        # Transition to win screen when text is fully scrolled
+        lines = ENDING_TEXT.split('\n')
+        text_height = len(lines) * 30
+        if self.ending_y < -text_height - 100:
+            self.game_state = STATE_WIN
+
     def _check_collisions(self):
         """Check for deadly collisions."""
         player_rect = self.player.get_rect()
@@ -358,6 +430,11 @@ class Game:
         """Draw everything."""
         if self.game_state == STATE_INTRO:
             self._draw_intro()
+            pygame.display.flip()
+            return
+
+        if self.game_state == STATE_ENDING:
+            self._draw_ending()
             pygame.display.flip()
             return
 
@@ -385,7 +462,7 @@ class Game:
         self._draw_hud()
 
         if self.game_state == STATE_WIN:
-            self._draw_overlay("ALL LEVELS COMPLETED!", (0, 255, 0), "Press ENTER to restart | ESC for menu")
+            self._draw_victory_screen()
         elif self.game_state == STATE_LOSE:
             self._draw_overlay("GAME OVER", (255, 0, 0), "Press ENTER to restart | ESC for menu")
         elif self.game_state == STATE_LEVEL_COMPLETE:
@@ -434,6 +511,45 @@ class Game:
 
                 rect = text.get_rect(center=(SCREEN_WIDTH // 2, int(y_pos)))
                 self.screen.blit(text, rect)
+
+        # Skip hint
+        skip_text = self.small_font.render("Press ENTER to skip", True, (80, 80, 80))
+        self.screen.blit(skip_text, (10, SCREEN_HEIGHT - 30))
+
+    def _draw_ending(self):
+        """Draw ending cutscene with scrolling text."""
+        self.screen.fill((0, 0, 0))
+
+        # Draw scrolling text with golden victory effect
+        lines = ENDING_TEXT.split('\n')
+
+        for i, line in enumerate(lines):
+            y_pos = self.ending_y + i * 30
+
+            # Only draw if on screen
+            if y_pos < -30 or y_pos > SCREEN_HEIGHT + 30:
+                continue
+
+            # Perspective effect
+            perspective = 1.0 - (SCREEN_HEIGHT / 2 - y_pos) / SCREEN_HEIGHT
+            perspective = max(0.3, min(1.0, perspective))
+
+            # Golden/green victory colors
+            if y_pos < SCREEN_HEIGHT / 3:
+                color = (int(200 * perspective), 255, int(100 * perspective))  # Green tint at top
+            else:
+                color = (255, int(215 * perspective), 0)  # Gold
+
+            # Title lines get special treatment
+            if line in ["MISSION ACCOMPLISHED", "THE END"]:
+                text = self.title_font.render(line, True, (0, 255, 100))
+            elif line == "You are THE GHOST.":
+                text = self.font.render(line, True, (255, 255, 0))
+            else:
+                text = self.intro_font.render(line, True, color)
+
+            rect = text.get_rect(center=(SCREEN_WIDTH // 2, int(y_pos)))
+            self.screen.blit(text, rect)
 
         # Skip hint
         skip_text = self.small_font.render("Press ENTER to skip", True, (80, 80, 80))
@@ -535,6 +651,44 @@ class Game:
         controls = "WASD: Move | SHIFT: Run (LOUD!) | X: Takedown | SPACE: Unlock | ESC: Menu"
         controls_surface = self.small_font.render(controls, True, (100, 100, 100))
         self.screen.blit(controls_surface, (10, SCREEN_HEIGHT - 25))
+
+    def _draw_victory_screen(self):
+        """Draw the final victory screen."""
+        self.screen.fill((0, 0, 0))
+
+        # Draw a starfield-like background
+        random.seed(42)  # Fixed seed for consistent stars
+        for _ in range(100):
+            x = random.randint(0, SCREEN_WIDTH)
+            y = random.randint(0, SCREEN_HEIGHT)
+            brightness = random.randint(50, 200)
+            pygame.draw.circle(self.screen, (brightness, brightness, brightness), (x, y), 1)
+
+        # Victory title with glow effect
+        title_text = "VICTORY"
+        title = self.title_font.render(title_text, True, (0, 255, 100))
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3))
+        self.screen.blit(title, title_rect)
+
+        # Subtitle
+        subtitle = self.font.render("THE GHOST STRIKES AGAIN", True, (255, 215, 0))
+        subtitle_rect = subtitle.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3 + 50))
+        self.screen.blit(subtitle, subtitle_rect)
+
+        # Diamond collected message
+        diamond_msg = self.intro_font.render("The Heart of the Leviathan is yours.", True, (0, 255, 255))
+        diamond_rect = diamond_msg.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 20))
+        self.screen.blit(diamond_msg, diamond_rect)
+
+        # Thank you message
+        thanks = self.small_font.render("Thank you for playing!", True, (150, 150, 150))
+        thanks_rect = thanks.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 60))
+        self.screen.blit(thanks, thanks_rect)
+
+        # Options
+        options = self.small_font.render("Press ENTER to play again | ESC for menu", True, (100, 100, 100))
+        options_rect = options.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 50))
+        self.screen.blit(options, options_rect)
 
     def _draw_overlay(self, text, color, subtext="Press R or ENTER to restart"):
         """Draw game over/win overlay."""
